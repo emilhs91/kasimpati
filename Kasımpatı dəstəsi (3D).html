@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kasımpatı dəstəsi</title>
+<style>
+:root{color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--fg:#f4f1e6;--accent:#f3e9a8}
+html{scroll-padding-top:env(safe-area-inset-top,0px);height:100%}
+*{box-sizing:inherit}
+body{margin:0;height:100%;background:radial-gradient(ellipse at 50% 42%,#1c2c22,#070a08 78%);color:var(--fg);font-family:Georgia,"Times New Roman",serif;display:flex;flex-direction:column;overflow:hidden}
+.stage{flex:1;min-height:0;position:relative}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
+.msg{position:absolute;inset:0;display:none;align-items:center;justify-content:center;padding:24px;text-align:center}
+.bar{padding:14px 0 26px;text-align:center}
+button{font:inherit;font-size:1.4rem;letter-spacing:.25em;text-transform:uppercase;color:var(--fg);background:rgba(255,255,255,.04);border:1.5px solid var(--accent);border-radius:999px;padding:.7em 2.6em;cursor:pointer;transition:background .3s,color .3s,transform .2s}
+button:hover{background:var(--accent);color:#1b1b12}
+button:active{transform:scale(.96)}
+</style>
+</head>
+<body>
+<div class="stage" id="stage"><div class="msg" id="msg">Bu brauzer 3D (WebGL) dəstəkləmir.</div></div>
+<div class="bar"><button id="btn" type="button">Aç</button></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+const T=THREE, stage=document.getElementById('stage'), btn=document.getElementById('btn');
+let renderer;
+try{
+  renderer=new T.WebGLRenderer({antialias:true,alpha:true,powerPreference:'high-performance'});
+}catch(e){document.getElementById('msg').style.display='flex';return;}
+renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+renderer.outputEncoding=T.sRGBEncoding;
+renderer.toneMapping=T.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.05;
+stage.appendChild(renderer.domElement);
+
+const scene=new T.Scene();
+const camera=new T.PerspectiveCamera(38,1,.1,100);
+scene.add(new T.HemisphereLight(0xfff6e0,0x1c2a20,.85));
+const key=new T.DirectionalLight(0xfff1d6,1.15);key.position.set(3,5,6);scene.add(key);
+const rim=new T.DirectionalLight(0x9fc4ff,.55);rim.position.set(-4,2,-3);scene.add(rim);
+const fill=new T.DirectionalLight(0xffffff,.25);fill.position.set(-3,-1,4);scene.add(fill);
+
+const clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const backOut=x=>{const c1=1.05,c3=c1+1;return 1+c3*Math.pow(x-1,3)+c1*Math.pow(x-1,2);};
+const sine=x=>.5-.5*Math.cos(Math.PI*clamp(x));
+const rnd=(a,b)=>a+Math.random()*(b-a);
+
+// ---- ləçək / yarpaq həndəsəsi ----
+function makeGeo(L,W,bend,curl,widthFn,colFn){
+  const SU=6,SV=12,pos=[],cols=[],idx=[];
+  for(let j=0;j<=SV;j++){
+    const v=j/SV; let y,z;
+    if(Math.abs(bend)<1e-3){y=L*v;z=0;}else{y=L*Math.sin(bend*v)/bend;z=L*(1-Math.cos(bend*v))/bend;}
+    const w=W*widthFn(v);
+    for(let i=0;i<=SU;i++){
+      const u=i/SU*2-1;
+      pos.push(u*w,y,z-curl*u*u*w);
+      const c=colFn(v,u);cols.push(c[0],c[1],c[2]);
+    }
+  }
+  for(let j=0;j<SV;j++)for(let i=0;i<SU;i++){
+    const a=j*(SU+1)+i,b=a+1,c=a+SU+1,d=c+1;idx.push(a,c,b,b,c,d);
+  }
+  const g=new T.BufferGeometry();
+  g.setAttribute('position',new T.Float32BufferAttribute(pos,3));
+  g.setAttribute('color',new T.Float32BufferAttribute(cols,3));
+  g.setIndex(idx);g.computeVertexNormals();
+  return g;
+}
+const petalW=v=>(.3+.7*Math.pow(Math.sin(Math.PI*(.1+.8*v)),.6))*Math.sqrt(Math.max(0,1-Math.pow(v,7)));
+const leafW=v=>Math.pow(Math.sin(Math.PI*Math.pow(v,.8)),.9)+.02;
+const petalCol=m=>(v,u)=>{
+  let r,g,b;
+  if(v<.3){const t=v/.3;r=.72+.25*t;g=.82+.15*t;b=.36+.5*t;}
+  else{const t=(v-.3)/.7;r=.97+.03*t;g=.97+.03*t;b=.86+.14*t;}
+  const k=1-.08*u*u, y=m*.2*(1-v*.4);
+  return [Math.min(1,(r-y*.1)*k),Math.min(1,g*k),Math.min(1,(b-y)*k)];
+};
+const leafCol=(v,u)=>{const k=1-.12*u*u;return [(.16+.14*v)*k,(.34+.2*v)*k,(.12+.08*v)*k];};
+const petalMat=new T.MeshStandardMaterial({vertexColors:true,side:T.DoubleSide,roughness:.55,metalness:0,emissive:0x2c2c22,emissiveIntensity:.35});
+const leafMat=new T.MeshStandardMaterial({vertexColors:true,side:T.DoubleSide,roughness:.65});
+const sepalMat=new T.MeshStandardMaterial({color:0x4a7a38,side:T.DoubleSide,roughness:.7});
+
+// qatlar: ən xaricdən ən daxilə
+const N=9;
+const cnt=[26,24,22,20,17,14,11,8,6];
+const len=[1,.94,.86,.77,.68,.58,.48,.4,.32];
+const thF=[86,76,66,56,46,36,27,18,10].map(d=>d*Math.PI/180);
+const geos=len.map((L,i)=>makeGeo(L,.17*(1-i*.02),.55-i*.19,.5,petalW,petalCol(i/(N-1))));
+const sepalGeo=makeGeo(.34,.09,.3,.3,petalW,()=>[.28,.48,.2]);
+
+function buildFlower(delay){
+  const tip=new T.Group(), head=new T.Group(); tip.add(head);
+  const petals=[]; let idx=0;
+  for(let i=0;i<N;i++){
+    for(let k=0;k<cnt[i];k++){
+      const piv=new T.Group(), arm=new T.Group(), mesh=new T.Mesh(geos[i],petalMat);
+      piv.position.y=i*.025;
+      piv.rotation.y=k/cnt[i]*Math.PI*2+i*.7+rnd(-.05,.05);
+      mesh.rotation.y=rnd(-.15,.15);
+      arm.add(mesh);piv.add(arm);head.add(piv);
+      petals.push({arm,th0:(5-i*.4+rnd(0,3))*Math.PI/180,th1:thF[i]+rnd(-.1,.1),s:rnd(.93,1.07),
+        start:delay+1.7+idx*.022+rnd(0,.03),last:-1});
+      idx++;
+    }
+  }
+  for(let k=0;k<8;k++){ // çanaq yarpaqcıqları
+    const piv=new T.Group(),arm=new T.Group(),m=new T.Mesh(sepalGeo,sepalMat);
+    piv.position.y=-.03;piv.rotation.y=k/8*Math.PI*2;arm.rotation.x=.45;arm.add(m);piv.add(arm);head.add(piv);
+  }
+  const rec=new T.Mesh(new T.SphereGeometry(.15,14,10),sepalMat);rec.scale.y=.6;rec.position.y=-.02;head.add(rec);
+  const disc=new T.Mesh(new T.SphereGeometry(.2,16,10),new T.MeshStandardMaterial({color:0xc9d64a,roughness:.8,emissive:0x333a10}));
+  disc.scale.y=.4;disc.position.y=.2;head.add(disc);
+  return {tip,head,petals};
+}
+
+// ---- dəstə ----
+const spots=[
+  {h:new T.Vector3(-1.75,1.55,-.1),tilt:[.5,.28],ox:-.1,d:0},
+  {h:new T.Vector3(0,2.3,.3),tilt:[.5,0],ox:0,d:.35},
+  {h:new T.Vector3(1.75,1.35,0),tilt:[.5,-.28],ox:.1,d:.7}
+];
+const stemMat=new T.MeshStandardMaterial({color:0x4d8040,roughness:.7});
+const TS=80,RS=8;
+const flowers=spots.map((s,fi)=>{
+  const base=new T.Vector3(s.ox,-2.7,0);
+  const curve=new T.CatmullRomCurve3([base,new T.Vector3(s.ox*.8,-1.5,0),
+    new T.Vector3(s.h.x*.42+s.ox*.5,-2.7+(s.h.y+2.7)*.5,s.h.z*.5),s.h.clone()],false,'centripetal');
+  const geo=new T.TubeGeometry(curve,TS,.045,RS,false);
+  const stem=new T.Mesh(geo,stemMat);scene.add(stem);
+  const f=buildFlower(s.d);
+  f.tip.rotation.set(s.tilt[0],0,s.tilt[1]);scene.add(f.tip);
+  const leaves=[];
+  [.3,.5].forEach((t,li)=>{
+    const g=new T.Group(),m=new T.Mesh(makeGeo(1,.3,.5,.2,leafW,leafCol),leafMat);
+    const side=(li+fi)%2?1:-1;
+    g.position.copy(curve.getPointAt(t));
+    g.rotation.z=-side*1.0;g.rotation.y=side*.3;
+    m.scale.setScalar(.75+li*.1);g.add(m);g.scale.setScalar(0);scene.add(g);
+    leaves.push({g,t});
+  });
+  f.stem=stem;f.curve=curve;f.leaves=leaves;f.phase=fi*1.7;
+  return f;
+});
+
+// lent
+const band=new T.Group();
+const bandMat=new T.MeshStandardMaterial({color:0xd1798f,roughness:.5,side:T.DoubleSide});
+const cyl=new T.Mesh(new T.CylinderGeometry(.3,.3,.42,24,1,true),bandMat);band.add(cyl);
+[-1,1].forEach(s=>{const l=new T.Mesh(new T.TorusGeometry(.17,.05,8,20),bandMat);l.position.set(s*.2,0,.3);l.rotation.z=s*.5;l.scale.set(1,.7,1);band.add(l);});
+const knot=new T.Mesh(new T.SphereGeometry(.08,12,10),bandMat);knot.position.z=.31;band.add(knot);
+band.position.y=-1.5;band.scale.setScalar(0);scene.add(band);
+
+// polen
+const cv=document.createElement('canvas');cv.width=cv.height=64;
+const cx=cv.getContext('2d'),gr=cx.createRadialGradient(32,32,0,32,32,32);
+gr.addColorStop(0,'rgba(255,248,200,1)');gr.addColorStop(1,'rgba(255,248,200,0)');cx.fillStyle=gr;cx.fillRect(0,0,64,64);
+const PN=90,pp=new Float32Array(PN*3),pv=[];
+for(let i=0;i<PN;i++){pp[i*3]=rnd(-4,4);pp[i*3+1]=rnd(-3,4.5);pp[i*3+2]=rnd(-2,3);pv.push(rnd(.05,.18));}
+const pg=new T.BufferGeometry();pg.setAttribute('position',new T.BufferAttribute(pp,3));
+const pts=new T.Points(pg,new T.PointsMaterial({size:.09,map:new T.CanvasTexture(cv),transparent:true,opacity:.0,depthWrite:false,blending:T.AdditiveBlending}));
+scene.add(pts);
+
+// ---- animasiya ----
+let TMAX=0;flowers.forEach(f=>f.petals.forEach(p=>{TMAX=Math.max(TMAX,p.start+1.6);}));
+let animT=0,open=false,last=performance.now(),px=0,py=0,cpx=0,cpy=0;
+const STEM=2.4;
+window.addEventListener('pointermove',e=>{px=e.clientX/innerWidth*2-1;py=e.clientY/innerHeight*2-1;});
+btn.addEventListener('click',()=>{open=!open;btn.textContent=open?'Bağla':'Aç';});
+
+function resize(){
+  const w=stage.clientWidth,h=stage.clientHeight;if(!w||!h)return;
+  renderer.setSize(w,h,false);camera.aspect=w/h;
+  const th=Math.tan(camera.fov*Math.PI/360);
+  camera.userData.d=Math.max(3.9/th,3.5/(th*camera.aspect));
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize',resize);
+if(window.ResizeObserver)new ResizeObserver(resize).observe(stage);
+resize();
+
+function frame(now){
+  const dt=Math.min(.05,(now-last)/1000);last=now;
+  animT=clamp(animT+(open?dt:-dt*2.4),0,TMAX);
+  const g=sine(animT/STEM), time=now/1000;
+  flowers.forEach(f=>{
+    const n=Math.round(g*TS)*RS*6;
+    f.stem.geometry.setDrawRange(0,n);f.stem.visible=n>0;
+    const p=f.curve.getPointAt(Math.max(.001,g));
+    f.tip.position.copy(p);
+    f.head.scale.setScalar(.18+.82*sine(g));
+    const sway=Math.min(1,Math.max(0,(animT-TMAX+1)))*Math.sin(time*.7+f.phase)*.025;
+    f.tip.rotation.x=.5+sway*.6;
+    f.leaves.forEach(l=>{l.g.scale.setScalar(sine((g-l.t)/.3));});
+    for(const p of f.petals){
+      const x=clamp((animT-p.start)/1.5);
+      if(x===p.last)continue;p.last=x;
+      const e=backOut(x);
+      p.arm.rotation.x=p.th0+(p.th1-p.th0)*e;
+      p.arm.scale.setScalar(p.s*(.7+.3*Math.min(1,e)));
+    }
+  });
+  band.scale.setScalar(sine((animT-.9)/.9));
+  pts.material.opacity=.55*sine(animT/3);
+  const a=pp;for(let i=0;i<PN;i++){a[i*3+1]+=pv[i]*dt;if(a[i*3+1]>4.5)a[i*3+1]=-3;a[i*3]+=Math.sin(time*.5+i)*dt*.05;}
+  pg.attributes.position.needsUpdate=true;
+  cpx+=(px-cpx)*.05;cpy+=(py-cpy)*.05;
+  const d=camera.userData.d||9;
+  camera.position.set(cpx*1.1+Math.sin(time*.2)*.2,.55-cpy*.5,d);
+  camera.lookAt(0,.4,0);
+  renderer.render(scene,camera);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
